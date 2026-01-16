@@ -1,0 +1,12 @@
+# System
+.DS_Store
+Thumbs.db
+*~
+
+# Build output
+out/
+build/
+
+# Local configuration
+*.user
+*.suo
