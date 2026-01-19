@@ -16,12 +16,26 @@ To bridge the gap between AI agents and web interfaces by removing the overhead 
 ## Repository Structure
 This project utilizes a **Source Overlay** pattern to maintain a lightweight footprint while modifying the massive Chromium codebase.
 *   `src/`: Contains the specific modified files that overlay the official Chromium source.
+*   `docs/`: Project documentation, including `challenges_report.md` (Build Analysis) and `development_log.md` (Tasks).
 *   `scripts/`: Utilities for applying changes to and capturing snapshots from a full Chromium build.
+
+## 🧠 Current Status: The "Hearing" Browser (Day 2)
+
+### ✅ Auditory Cortex (Online)
+*   **Feature**: Native Audio Bridge (`content.dll` -> `nexus_agent.py`).
+*   **Capabilities**: Real-time microphone capture, "Hyper-Sensitive" Voice Activity Detection (0.2s), Gemini 1.5 Pro transcription.
+*   **Verification**: "Matrix Rain" in terminal validates packet flow.
+
+### ⚠️ Visual Cortex (Paused)
+*   **Feature**: "Computer Use" / Zero-Latency Video Stream.
+*   **Status**: Blocked by Build System "Antibody" response (`manifest error` in `gn gen`).
+*   **Plan**: Requires architectural refactor (Day 3).
 
 ## Getting Started
 
 ### Prerequisites
 *   Windows 10/11 (64-bit)
+*   **Critical:** The source code path must **NOT** contain spaces (e.g., use `C:\neural-chromium`, NOT `C:\My Projects\neural-chromium`). Chromium build tools (gn, ninja) will fail if there are spaces in the path.
 *   Visual Studio 2022 (with Desktop development with C++, MFC/ATL support)
 *   [depot_tools](https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html) installed and in your PATH.
 
