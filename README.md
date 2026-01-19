@@ -16,7 +16,8 @@ To bridge the gap between AI agents and web interfaces by removing the overhead 
 ## Repository Structure
 This project utilizes a **Source Overlay** pattern to maintain a lightweight footprint while modifying the massive Chromium codebase.
 *   `src/`: Contains the specific modified files that overlay the official Chromium source.
-*   `docs/`: Project documentation, including `challenges_report.md` (Build Analysis) and `development_log.md` (Tasks).
+*   `challenges_report.md`: Deep dive into build system analysis and blocks.
+*   `development_log.md`: Implementation task checklist.
 *   `scripts/`: Utilities for applying changes to and capturing snapshots from a full Chromium build.
 
 ## 🧠 Current Status: The "Hearing" Browser (Day 2)
