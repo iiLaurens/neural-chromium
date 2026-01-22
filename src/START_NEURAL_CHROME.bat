@@ -50,16 +50,27 @@ del /Q C:\tmp\nexus_agent.log 2>nul
 echo     Done.
 echo.
 
+REM Start Native WebSocket Server
+echo [3/4] Starting Native Server...
+start "Native Server" cmd /k "cd /d %~dp0 && python -u native_server.py"
+timeout /t 1 /nobreak >nul
+echo     Done.
+echo.
+
 REM Start Python Agent
-echo [3/4] Starting Nexus Agent (Python)...
-start "Nexus Agent" cmd /k "cd /d %~dp0 && python nexus_agent.py"
+echo [3.5/4] Starting Nexus Agent (Python)...
+start "Nexus Agent" cmd /k "cd /d %~dp0 && python -u nexus_agent.py"
 timeout /t 2 /nobreak >nul
 echo     Done.
 echo.
 
-REM Launch Chrome
+REM Launch Chrome with flags to force pure software compositing
+REM --disable-gpu: Disables hardware acceleration
+REM --disable-software-rasterizer: Forces pure software compositing (bypasses SwiftShader)
+REM --in-process-gpu: Runs GPU logic in browser process for easier debugging
+REM --remote-debugging-port=9222: Enables Chrome DevTools Protocol for browser control
 echo [4/4] Launching Neural-Chromium...
-start "" cmd /c "c:\operation-greenfield\neural-chromium\src\out\AgentDebug\chrome.exe --in-process-gpu --disable-gpu --disable-software-rasterizer --enable-logging --v=1 --disable-features=OnDeviceSpeechRecognition --vmodule=network_speech_recognition_engine_impl=1 --user-data-dir=C:\tmp\neural_chrome_profile 2> C:\tmp\neural_chrome_profile\chrome_debug.log"
+start "" cmd /c "c:\\operation-greenfield\\neural-chromium\\src\\out\\AgentDebug\\chrome.exe --load-extension=c:\\operation-greenfield\\neural-chromium-overlay\\extension --in-process-gpu --disable-gpu --disable-software-rasterizer --remote-debugging-port=9222 --enable-logging --v=1 --disable-features=OnDeviceSpeechRecognition --vmodule=network_speech_recognition_engine_impl=1 --user-data-dir=C:\\tmp\\neural_chrome_profile 2> C:\\tmp\\neural_chrome_profile\\chrome_debug.log"
 echo     Done.
 echo.
 

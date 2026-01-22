@@ -1,0 +1,9 @@
+{
+    "name": "com.neural_chromium.browser_control",
+    "description": "Neural-Chromium Browser Control Native Host",
+    "path": "C:\\operation-greenfield\\neural-chromium-overlay\\src\\native_host.bat",
+    "type": "stdio",
+    "allowed_origins": [
+        "chrome-extension://REPLACE_WITH_YOUR_EXTENSION_ID/"
+    ]
+}
