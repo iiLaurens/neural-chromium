@@ -14,5 +14,9 @@ build/
 # API Keys and sensitive config
 src/config.json
 config.json
-*.log  
-*.wav 
+*.log
+*.wav
+*.gguf
+*.bin
+.env
+src/config.json 

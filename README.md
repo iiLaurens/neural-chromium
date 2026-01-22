@@ -42,7 +42,9 @@ This project utilizes a **Source Overlay** pattern to maintain a lightweight foo
 *   **Capabilities**:
     - High-performance (Shared Memory) frame streaming
     - Zero-copy architecture using NULL DACL for cross-process access
-    - Integrated with OpenAI GPT-4o Vision
+    - Zero-copy architecture using NULL DACL for cross-process access
+    - Integrated with **Ollama (Llama 3.2 Vision)** for local, private VLM control.
+    - Cloud fallback available for OpenAI GPT-4o.
 
 ### ✅ Transcription Pipeline (WORKING)
 *   **Status**: Audio continuously processed by Python agent
@@ -50,15 +52,17 @@ This project utilizes a **Source Overlay** pattern to maintain a lightweight foo
 *   **Tuning**: VAD Threshold lowered to 1500 (High Sensitivity), Latency reduced to ~1.5s
 *   **Evidence**: Wake word "Nexus" triggers reliably.
 
-## Running the Agent
-To ensure all hooks (Audio + Vision) work correctly, you **must** use the provided launch script:
+## Running the Agent (Local VLM Mode)
+To ensure all hooks (Audio + Vision) and the Local LLM work correctly, use the provided launch script:
 ```powershell
-.\src\START_NEURAL_CHROME.bat
+.\RESTART_ALL.bat
 ```
 This script handles:
-1.  **Process Consolidation**: Adds `--in-process-gpu` (Crucial for Vision).
-2.  **Permissions**: Sets up logging redirection.
-3.  **Agent Lifecycle**: Launches `nexus_agent.py` and the Chrome instance together.
+1.  **Ollama**: Starts the local inference server (if not running).
+2.  **Chrome**: Launches Neural-Chromium with `--in-process-gpu` (Crucial for Vision).
+3.  **Agent**: Launches `nexus_agent.py` to bridge Vision/Audio to the VLM.
+
+**Note**: You must have [Ollama](https://ollama.com/) installed and `llama3.2-vision` pulled (`ollama pull llama3.2-vision`).
 
 
 ## Getting Started
@@ -67,7 +71,9 @@ This script handles:
 *   Windows 10/11 (64-bit)
 *   **Critical:** The source code path must **NOT** contain spaces (e.g., use `C:\neural-chromium`, NOT `C:\My Projects\neural-chromium`). Chromium build tools (gn, ninja) will fail if there are spaces in the path.
 *   Visual Studio 2022 (with Desktop development with C++, MFC/ATL support)
+*   Visual Studio 2022 (with Desktop development with C++, MFC/ATL support)
 *   [depot_tools](https://commondatastorage.googleapis.com/chrome-infra-docs/flat/depot_tools/docs/html/depot_tools_tutorial.html) installed and in your PATH.
+*   [Ollama](https://ollama.com/) installed for local VLM inference.
 
 ### 1. Fetch Chromium Source
 Create a working directory (e.g., `c:\Operation Greenfield\neural-chromium`) and fetch the code. **Note:** This will download >50GB of data.
