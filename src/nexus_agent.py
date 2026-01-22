@@ -8,6 +8,7 @@ import struct
 import ctypes
 import threading
 import io
+import socket
 from abc import ABC, abstractmethod
 
 # --- Dependencies ---
@@ -31,9 +32,37 @@ try:
 except ImportError:
     anthropic_lib = None
 
+try:
+    import pychrome
+except ImportError:
+    pychrome = None
+
 # --- Windows Input Injection (ctypes) ---
-SendInput = ctypes.windll.user32.SendInput
+user32 = ctypes.windll.user32
+SendInput = user32.SendInput
 PUL = ctypes.POINTER(ctypes.c_ulong)
+
+# Input Constants
+INPUT_MOUSE = 0
+INPUT_KEYBOARD = 1
+INPUT_HARDWARE = 2
+
+# Mouse Flags
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_RIGHTDOWN = 0x0008
+MOUSEEVENTF_RIGHTUP = 0x0010
+MOUSEEVENTF_MIDDLEDOWN = 0x0020
+MOUSEEVENTF_MIDDLEUP = 0x0040
+MOUSEEVENTF_ABSOLUTE = 0x8000
+MOUSEEVENTF_WHEEL = 0x0800
+
+# Keyboard Flags
+KEYEVENTF_EXTENDEDKEY = 0x0001
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+KEYEVENTF_SCANCODE = 0x0008
 
 class KeyBdInput(ctypes.Structure):
     _fields_ = [("wVk", ctypes.c_ushort),
@@ -63,6 +92,427 @@ class Input_I(ctypes.Union):
 class Input(ctypes.Structure):
     _fields_ = [("type", ctypes.c_ulong),
                 ("ii", Input_I)]
+
+class POINT(ctypes.Structure):
+    _fields_ = [("x", ctypes.c_long),
+                 ("y", ctypes.c_long)]
+
+class RECT(ctypes.Structure):
+    _fields_ = [("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long)]
+
+class InputManager:
+    def __init__(self):
+        self.screen_width = user32.GetSystemMetrics(0)
+        self.screen_height = user32.GetSystemMetrics(1)
+        log(f"Input Manager Initialized. Screen: {self.screen_width}x{self.screen_height}")
+
+    def find_browser_window(self):
+        # Find Chromium window. Class is usually "Chrome_WidgetWin_1"
+        hwnd = user32.FindWindowW("Chrome_WidgetWin_1", None)
+        return hwnd
+
+    def activate_browser_window(self):
+        """Brings Chrome window to foreground before input."""
+        hwnd = self.find_browser_window()
+        if not hwnd:
+            return False
+            
+        # Multi-step activation to bypass Windows focus restrictions
+        # 1. Restore if minimized
+        SW_RESTORE = 9
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        
+        # 2. Bring to top
+        user32.BringWindowToTop(hwnd)
+        
+        # 3. Try to set foreground
+        user32.SetForegroundWindow(hwnd)
+        
+        # 4. Attach to foreground thread and try again
+        foreground_hwnd = user32.GetForegroundWindow()
+        if foreground_hwnd != hwnd:
+            foreground_thread = user32.GetWindowThreadProcessId(foreground_hwnd, None)
+            current_thread = ctypes.windll.kernel32.GetCurrentThreadId()
+            
+            user32.AttachThreadInput(current_thread, foreground_thread, True)
+            user32.SetForegroundWindow(hwnd)
+            user32.AttachThreadInput(current_thread, foreground_thread, False)
+        
+        # 5. Verify activation
+        time.sleep(0.05)
+        if user32.GetForegroundWindow() == hwnd:
+            return True
+        
+        log("Warning: Browser window activation may have failed")
+        return True  # Proceed anyway
+
+    def get_client_rect(self, hwnd):
+        if not hwnd: return None
+        rect = RECT()
+        if user32.GetClientRect(hwnd, ctypes.byref(rect)):
+            return rect
+        return None
+
+    def map_coordinates(self, img_x, img_y, img_w, img_h):
+        """Maps relative image coordinates to absolute screen coordinates using ClientToScreen."""
+        hwnd = self.find_browser_window()
+        if not hwnd:
+            log("Cannot find Browser Window for coordinate mapping.")
+            return None, None
+            
+        # 1. Get Client Area Dimensions (The actual web content area)
+        client_rect = self.get_client_rect(hwnd)
+        if not client_rect: return None, None
+        
+        client_w = client_rect.right - client_rect.left
+        client_h = client_rect.bottom - client_rect.top
+        
+        if client_w == 0 or client_h == 0: return None, None
+
+        # 2. Scale Image Coords to Client Area
+        scale_x = client_w / img_w
+        scale_y = client_h / img_h
+        
+        client_x = int(img_x * scale_x)
+        client_y = int(img_y * scale_y)
+        
+        # 3. Convert Client Point to Screen Point
+        pt = POINT(client_x, client_y)
+        if user32.ClientToScreen(hwnd, ctypes.byref(pt)):
+            return pt.x, pt.y
+            
+        return None, None
+
+    def move_mouse(self, x, y):
+        # Normalize to 0-65535 for Absolute Move
+        norm_x = int(x * 65535 / self.screen_width)
+        norm_y = int(y * 65535 / self.screen_height)
+        
+        ii = Input_I()
+        ii.mi = MouseInput(norm_x, norm_y, 0, MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE, 0, None)
+        x = Input(INPUT_MOUSE, ii)
+        user32.SendInput(1, ctypes.pointer(x), ctypes.sizeof(x))
+
+    def click(self, x, y):
+        # Activate Chrome first
+        self.activate_browser_window()
+        
+        self.move_mouse(x, y)
+        time.sleep(0.05) # Stabilize
+        
+        # Down
+        ii_down = Input_I()
+        ii_down.mi = MouseInput(0, 0, 0, MOUSEEVENTF_LEFTDOWN, 0, None)
+        x_down = Input(INPUT_MOUSE, ii_down)
+        user32.SendInput(1, ctypes.pointer(x_down), ctypes.sizeof(x_down))
+        
+        time.sleep(0.05)
+        
+        # Up
+        ii_up = Input_I()
+        ii_up.mi = MouseInput(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, None)
+        x_up = Input(INPUT_MOUSE, ii_up)
+        user32.SendInput(1, ctypes.pointer(x_up), ctypes.sizeof(x_up))
+
+    def type_text(self, text):
+        # Activate Chrome first
+        if not self.activate_browser_window():
+            log("Warning: Could not activate browser window before typing")
+            
+        log(f"Typing: {text}")
+        for char in text:
+            if char == '\n':
+                self.press_key(0x0D) # VK_RETURN
+                continue
+            
+            ii_down = Input_I()
+            ii_down.ki = KeyBdInput(0, ord(char), KEYEVENTF_UNICODE, 0, None)
+            x_down = Input(INPUT_KEYBOARD, ii_down)
+            user32.SendInput(1, ctypes.pointer(x_down), ctypes.sizeof(x_down))
+            
+            ii_up = Input_I()
+            ii_up.ki = KeyBdInput(0, ord(char), KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, None)
+            x_up = Input(INPUT_KEYBOARD, ii_up)
+            user32.SendInput(1, ctypes.pointer(x_up), ctypes.sizeof(x_up))
+            time.sleep(0.01)
+
+    def press_key(self, vk_code):
+        # VK_RETURN = 0x0D, VK_BACK = 0x08, VK_TAB = 0x09
+        ii_down = Input_I()
+        ii_down.ki = KeyBdInput(vk_code, 0, 0, 0, None)
+        x_down = Input(INPUT_KEYBOARD, ii_down)
+        user32.SendInput(1, ctypes.pointer(x_down), ctypes.sizeof(x_down))
+        
+        time.sleep(0.05)
+        
+        ii_up = Input_I()
+        ii_up.ki = KeyBdInput(vk_code, 0, KEYEVENTF_KEYUP, 0, None)
+        x_up = Input(INPUT_KEYBOARD, ii_up)
+        user32.SendInput(1, ctypes.pointer(x_up), ctypes.sizeof(x_up))
+
+    def press_special_key(self, key_name):
+        key_map = {
+            "enter": 0x0D,
+            "return": 0x0D,
+            "backspace": 0x08,
+            "tab": 0x09,
+            "space": 0x20,
+            "escape": 0x1B,
+            "left": 0x25,
+            "up": 0x26,
+            "right": 0x27,
+            "down": 0x28,
+            "delete": 0x2E
+        }
+        vk = key_map.get(key_name.lower())
+        if vk:
+            log(f"Pressing Special Key: {key_name} (VK: {vk})")
+            self.press_key(vk)
+        else:
+            log(f"Unknown Special Key: {key_name}")
+
+class ExtensionController:
+    """Controls browser via Chrome Extension (Socket IPC)"""
+    def __init__(self, port=9223):
+        self.port = port
+        self.connected = False
+        
+    def send_command(self, action, params):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(2)
+                s.connect(('127.0.0.1', self.port))
+                
+                command = {
+                    "id": int(time.time() * 1000),
+                    "action": action,
+                    "params": params
+                }
+                
+                # Send length-prefixed message
+                data = json.dumps(command).encode('utf-8')
+                s.sendall(struct.pack('!I', len(data)) + data)
+                
+                # Read response
+                length_bytes = s.recv(4)
+                if length_bytes:
+                    length = struct.unpack('!I', length_bytes)[0]
+                    resp_data = s.recv(length)
+                    response = json.loads(resp_data.decode('utf-8'))
+                    return response
+        except Exception as e:
+            # log(f"Extension IPC error: {e}") # Too spammy if not connected
+            pass
+        return None
+
+    def check_connection(self):
+        """Check if Native Host is listening"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(0.1)
+                s.connect(('127.0.0.1', self.port))
+            self.connected = True
+            return True
+        except:
+            self.connected = False
+            return False
+
+    def click(self, x, y):
+        resp = self.send_command('click', {'x': x, 'y': y})
+        if resp and resp.get('success'):
+            log(f"Extension Click: ({x}, {y})")
+            return True
+        return False
+
+    def type_text(self, text):
+        resp = self.send_command('type', {'text': text})
+        if resp and resp.get('success'):
+            log(f"Extension Typed: {text}")
+            return True
+        return False
+
+    def press_key(self, key):
+        resp = self.send_command('press_key', {'key': key})
+        if resp and resp.get('success'):
+            log(f"Extension Key: {key}")
+            return True
+        return False
+
+    def navigate(self, url):
+        resp = self.send_command('navigate', {'url': url})
+        if resp and resp.get('success'):
+            log(f"Extension Navigate: {url}")
+            return True
+        return False
+
+# --- CDP Browser Controller ---
+class CDPController:
+    """Controls browser via Chrome DevTools Protocol - no focus issues!"""
+    def __init__(self, port=9222):
+        self.port = port
+        self.browser = None
+        self.tab = None
+        self.connected = False
+        
+    def connect(self):
+        """Connect to Chrome via CDP"""
+        if not pychrome:
+            log("pychrome not installed. CDP disabled.")
+            return False
+            
+        try:
+            self.browser = pychrome.Browser(url=f"http://127.0.0.1:{self.port}")
+            tabs = self.browser.list_tab()
+            if not tabs:
+                log("No tabs found in Chrome")
+                return False
+                
+            # Use first tab
+            self.tab = tabs[0]
+            self.tab.start()
+            
+            # Don't enable domains - they should work without explicit enable
+            # Some Chrome builds don't support Input.enable
+            
+            self.connected = True
+            log(f"CDP Connected to Chrome (tab count: {len(tabs)})")
+            return True
+            
+        except Exception as e:
+            log(f"CDP connection failed: {e}")
+            self.connected = False
+            return False
+    
+    def click(self, x, y):
+        """Click at coordinates via CDP"""
+        if not self.connected:
+            log("CDP not connected")
+            return False
+            
+        try:
+            # Use JavaScript injection instead of Input domain (more compatible)
+            js_code = f"""
+            (function() {{
+                const el = document.elementFromPoint({x}, {y});
+                if (el) {{
+                    el.click();
+                    return true;
+                }}
+                return false;
+            }})()
+            """
+            
+            result = self.tab.call_method("Runtime.evaluate", expression=js_code)
+            log(f"CDP Click at ({x}, {y})")
+            return True
+            
+        except Exception as e:
+            log(f"CDP click failed: {e}")
+            return False
+    
+    def type_text(self, text):
+        """Type text via CDP"""
+        if not self.connected:
+            log("CDP not connected")
+            return False
+            
+        try:
+            # Use JavaScript to insert text - try multiple approaches
+            escaped_text = text.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"')
+            js_code = f"""
+            (function() {{
+                let el = document.activeElement;
+                let found = false;
+                
+                // If nothing useful is focused, find first visible input
+                if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA' && !el.isContentEditable)) {{
+                    // Try different selectors
+                    el = document.querySelector('input[type="text"]:not([style*="display: none"])') ||
+                         document.querySelector('input[type="search"]') ||
+                         document.querySelector('textarea') ||
+                         document.querySelector('[contenteditable="true"]') ||
+                         document.querySelector('input:not([type="hidden"])');
+                    
+                    if (el) {{
+                        el.focus();
+                        found = true;
+                    }}
+                }}
+                
+                if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {{
+                    // For input/textarea, set value directly
+                    el.value = '{escaped_text}';
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    el.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    return {{ success: true, element: el.tagName, found: found }};
+                }} else if (el && el.isContentEditable) {{
+                    // For contenteditable, use textContent
+                    el.textContent = '{escaped_text}';
+                    el.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                    return {{ success: true, element: 'contenteditable', found: found }};
+                }}
+                
+                return {{ success: false, element: el ? el.tagName : 'none', found: found }};
+            }})()
+            """
+            
+            result = self.tab.call_method("Runtime.evaluate", expression=js_code)
+            log(f"CDP Type result: {result}")
+            log(f"CDP Typed: {text}")
+            return True
+            
+        except Exception as e:
+            log(f"CDP type failed: {e}")
+            return False
+    
+    def press_key(self, key):
+        """Press a key via CDP"""
+        if not self.connected:
+            log("CDP not connected")
+            return False
+            
+        try:
+            # Use JavaScript to simulate key press
+            js_code = f"""
+            (function() {{
+                const el = document.activeElement;
+                if (el) {{
+                    const event = new KeyboardEvent('keydown', {{ key: '{key}', bubbles: true }});
+                    el.dispatchEvent(event);
+                    const event2 = new KeyboardEvent('keyup', {{ key: '{key}', bubbles: true }});
+                    el.dispatchEvent(event2);
+                    return true;
+                }}
+                return false;
+            }})()
+            """
+            
+            self.tab.call_method("Runtime.evaluate", expression=js_code)
+            log(f"CDP Pressed key: {key}")
+            return True
+            
+        except Exception as e:
+            log(f"CDP key press failed: {e}")
+            return False
+    
+    def navigate(self, url):
+        """Navigate to URL via CDP"""
+        if not self.connected:
+            log("CDP not connected")
+            return False
+            
+        try:
+            self.tab.call_method("Page.navigate", url=url)
+            log(f"CDP Navigate to: {url}")
+            return True
+            
+        except Exception as e:
+            log(f"CDP navigate failed: {e}")
+            return False
+
 
 # --- Visual Cortex (Shared Memory) ---
 import mmap
@@ -244,20 +694,9 @@ class VisualCortexClient:
             log(f"I see: {description}")
             print(f" [Agent] I see: {description}")
             
-def type_text(text):
-    log(f"Typing text: {text}")
-    for char in text:
-        # Simple unicode injection
-        i = Input()
-        i.type = 1 # INPUT_KEYBOARD
-        i.ii.ki.wScan = ord(char)
-        i.ii.ki.dwFlags = 0x0004 # KEYEVENTF_UNICODE
-        ctypes.windll.user32.SendInput(1, ctypes.pointer(i), ctypes.sizeof(i))
-        
-        # Release
-        i.ii.ki.dwFlags = 0x0004 | 0x0002 # KEYEVENTF_KEYUP
-        ctypes.windll.user32.SendInput(1, ctypes.pointer(i), ctypes.sizeof(i))
-        time.sleep(0.01) # fast typing
+# Removed old type_text function, replaced by InputManager method
+# def type_text(text):
+#     ...
 
 # --- Logging ---
 LOG_FILE = r"C:\tmp\nexus_agent.log"
@@ -416,6 +855,9 @@ class MockProvider(LLMProvider):
 class NexusAgent:
     def __init__(self):
         self.config = load_config()
+        self.input_manager = InputManager() # Init HWA Input (fallback)
+        self.cdp = CDPController() # Init CDP Browser Control (Legacy)
+        self.extension = ExtensionController() # Init Extension Control (Primary)
         self.provider: LLMProvider = None
         self.initialize_provider()
         
@@ -468,6 +910,39 @@ class NexusAgent:
         log("CRITICAL: All AI Providers failed to initialize.")
         print(" [Agent] WARNING: No AI Brain available. Voice/Vision will not work.", flush=True)
 
+    def file_command_listener(self):
+        """Watches for commands in C:\\tmp\\neural_command.txt"""
+        cmd_file = r"C:\tmp\neural_command.txt"
+        log(f"Watching for commands in: {cmd_file}")
+        
+        # Ensure file exists
+        if not os.path.exists(cmd_file):
+            with open(cmd_file, "w") as f:
+                f.write("")
+                
+        last_mtime = 0
+        while True:
+            try:
+                time.sleep(0.5)
+                if not os.path.exists(cmd_file): continue
+                
+                mtime = os.path.getmtime(cmd_file)
+                if mtime > last_mtime:
+                    last_mtime = mtime
+                    with open(cmd_file, "r") as f:
+                        content = f.read().strip()
+                        
+                    if content:
+                        log(f"File Command: {content}")
+                        print(f" [Agent] 📁 File Command: {content}", flush=True)
+                        self.process_text_command(content)
+                        
+                        # Clear file to acknowledge
+                        with open(cmd_file, "w") as f:
+                            f.write("")
+            except Exception as e:
+                log(f"File Command Error: {e}")
+
     def run(self):
         log("Listening on Stdio...")
         
@@ -477,17 +952,50 @@ class NexusAgent:
         log_file = os.path.join(log_dir, "chrome_debug.log")
         t = threading.Thread(target=self.tail_chrome_log, args=(log_file,), daemon=True)
         t.start()
+        
+        # Console Input Thread
+        t_console = threading.Thread(target=self.console_listener, daemon=True)
+        t_console.start()
+        
+        # File Command Thread (Alternative Input)
+        t_file = threading.Thread(target=self.file_command_listener, daemon=True)
+        t_file.start()
 
         if sys.platform == 'win32':
-            import msvcrt
-            msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+            # import msvcrt
+            # msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY) # Disable Binary Mode on Stdin (Breaks text input?)
             sys.stdout.reconfigure(encoding='utf-8')
 
         if self.visual_cortex.connected:
              print(" [Agent] Visual Cortex Linked 👁️ + Audio Active 🔊. Listening...", flush=True)
              print(" [Agent] AUTO-BENCHMARK MODE ACTIVE: Switch tabs and scroll/play video to test FPS!", flush=True)
+             print(" [Agent] To test input: Write 'debug type hello' to C:\\tmp\\neural_command.txt", flush=True)
         else:
              print(" [Agent] Audio-only mode 🔊. Listening for voice input...", flush=True)
+        
+        # Connect to Chrome via Extension (Primary)
+        print(" [Agent] Connecting to Chrome Extension...", flush=True)
+        
+        # Retry connection for up to 10 seconds (Chrome startup can be slow)
+        extension_connected = False
+        for i in range(5):
+            if self.extension.check_connection():
+                print(" [Agent] ✅ Extension Connected - Native Control Ready!", flush=True)
+                extension_connected = True
+                break
+            time.sleep(2)
+            if i < 4: print(f" [Agent] Waiting for Extension... ({i+1}/5)", flush=True)
+            
+        if not extension_connected:
+             print(" [Agent] ⚠️ Extension connection failed. Is Chrome running?", flush=True)
+
+        # Connect to Chrome via CDP (Legacy Fallback)
+        print(" [Agent] Connecting to Chrome via CDP...", flush=True)
+        time.sleep(1)  # Give Chrome time to start
+        if self.cdp.connect():
+            print(" [Agent] ✅ CDP Connected - Browser control ready!", flush=True)
+        else:
+            print(" [Agent] ⚠️  CDP connection failed - falling back to SendInput", flush=True)
         
         # AUTO-BENCHMARK LOOP
         frame_count = 0
@@ -506,7 +1014,8 @@ class NexusAgent:
                 elapsed = now - last_time
                 fps = frame_count / elapsed
                 if fps > 0:
-                    print(f" [Agent] Input FPS: {fps:.2f} (Frames: {frame_count})", flush=True)
+                    # Use \r to overwrite the same line
+                    print(f"\r [Agent] Input FPS: {fps:5.2f} (Frames: {frame_count:3d})", end='', flush=True)
                 frame_count = 0
                 last_time = now
             
@@ -621,32 +1130,96 @@ class NexusAgent:
                 text = text.strip()
                 log(f"Heard: {text}")
                 print(f" [Agent] I heard: '{text}'")
-                
-                # VERIFICATION SHORTCUT: Allow "benchmark" without wake word
-                if "benchmark" in text.lower():
-                    self.benchmark_system()
-                    return
-
-                # 2. Check for Wake Word ("NEXUS")
-                if text.lower().startswith("nexus"):
-                    # "nexus" is 5 chars. Command follows.
-                    command = text[5:].strip()
-                    log(f"Wake word detected. Command: {command}")
-                    
-                    if "describe" in command.lower() and "screen" in command.lower():
-                        self.describe_screen()
-                    elif "benchmark" in command.lower():
-                        self.benchmark_system()
-                    else:
-                        self.execute_command(command)
-                else:
-                    # Dictation Mode (No wake word)
-                    type_text(text + " ")
+                self.process_text_command(text)
             else:
                  log(f"Ignored garbage transcription: '{text}'")
                 
         except Exception as e:
             log(f"Transcription/Action Error: {e}")
+
+    def console_listener(self):
+        """Allows typing commands directly into the agent console."""
+        print(" [Agent] Console Ready. Type commands below:", flush=True)
+        while True:
+            try:
+                # Use standard input() which is thread-safe enough for this
+                text = input(" > ")
+                if text:
+                    print(f"\n [Agent] Console Command: {text}")
+                    self.process_text_command(text)
+            except EOFError:
+                break
+            except Exception as e:
+                log(f"Console Error: {e}")
+                pass
+
+    def process_text_command(self, text):
+        # 1. Check for Wake Word ("NEXUS")
+        # VERIFICATION SHORTCUT: Allow "benchmark" without wake word
+        if "benchmark" in text.lower():
+            self.benchmark_system()
+            return
+
+        if text.lower().startswith("nexus") or text.lower().startswith("debug"):
+            # "nexus" is 5 chars. Command follows.
+            # "debug" allows typing "debug click the button" without saying nexus
+            trigger = text.split(" ")[0]
+            command = text[len(trigger):].strip()
+            
+            log(f"Command detected: {command}")
+            
+            # Direct debug commands (bypass LLM)
+            if text.lower().startswith("debug"):
+                if command.lower().startswith("type "):
+                    text_to_type = command[5:]  # Remove "type "
+                    print(f" [Agent] ⌨️ Direct Type: '{text_to_type}'", flush=True)
+                    if self.extension.connected:
+                        self.extension.type_text(text_to_type)
+                    elif self.cdp.connected:
+                        self.cdp.type_text(text_to_type)
+                    else:
+                        self.input_manager.type_text(text_to_type)
+                    return
+                    
+                elif command.lower().startswith("press "):
+                    key = command[6:]  # Remove "press "
+                    print(f" [Agent] ⌨️ Direct Press: '{key}'", flush=True)
+                    if self.extension.connected:
+                        self.extension.press_key(key)
+                    elif self.cdp.connected:
+                        self.cdp.press_key(key)
+                    else:
+                        self.input_manager.press_special_key(key)
+                    return
+                    
+                elif command.lower().startswith("click "):
+                    # Parse "click X Y" or let LLM handle "click on the button"
+                    parts = command[6:].split()
+                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                        x, y = int(parts[0]), int(parts[1])
+                        print(f" [Agent] 🖱️ Direct Click: ({x}, {y})", flush=True)
+                        if self.extension.connected:
+                            self.extension.click(x, y)
+                        elif self.cdp.connected:
+                            self.cdp.click(x, y)
+                        else:
+                            self.input_manager.click(x, y)
+                        return
+            
+            # LLM-powered commands
+            if "describe" in command.lower() and "screen" in command.lower():
+                self.describe_screen()
+            elif "benchmark" in command.lower():
+                self.benchmark_system()
+            else:
+                self.execute_command(command)
+        else:
+            # Dictation Mode (No wake word)
+            # Only if it came from voice? 
+            # If console, maybe we assume command? NO, keep consistent.
+            # print(" [Agent] Dictating...", flush=True)
+            # self.input_manager.type_text(text + " ")
+            pass
 
     def benchmark_system(self, duration=5.0):
         if not self.visual_cortex.connected:
@@ -687,20 +1260,115 @@ class NexusAgent:
 
     def execute_command(self, command):
         # Ask the LLM what to do
-        prompt = f"You are a browser agent. The user said: '{command}'. Respond with a JSON action: {{'action': 'navigate', 'url': '...'}} or {{'action': 'type', 'text': '...'}}."
+        log(f"Executing Decision for: {command}")
+        
+        # 1. Capture Context (Screen)
+        img = self.visual_cortex.capture_image()
+        if not img:
+            print(" [Agent] Blind - Cannot see screen to act.", flush=True)
+            return
+
+        # 2. Construct Prompt with Image
+        # We need a strict JSON schema for the Action
+        prompt = f"""
+        User command: '{command}'
+        
+        You are a Browser Agent. You can see the screen.
+        Analyze the UI elements and deciding on the correct action.
+        
+        Available Actions (JSON):
+        - CLICK: {{"action": "click", "x": <int>, "y": <int>, "thought": "..."}} (Coordinates are relative to the image size: {img.width}x{img.height})
+        - TYPE:  {{"action": "type", "text": "<string>", "thought": "..."}}
+        - PRESS: {{"action": "press", "key": "<key_name>", "thought": "..."}} (For special keys: Enter, Backspace, Tab, Escape, Left, Right, Up, Down)
+        - SCROLL: {{"action": "scroll", "direction": "down", "amount": <int>}}
+        - NAVIGATE: {{"action": "navigate", "url": "<url>"}} (Only if explicitly asked/needed)
+        - DONE: {{"action": "done", "thought": "Task complete"}}
+        
+        Return ONLY valid JSON. No preamble.
+        """
+        
         try:
-            response = self.provider.generate_text(prompt)
-            log(f"Agent thought: {response}")
-            # Here we would parse the JSON and call C++ methods via stdout/IPC
-            # For now, just type the thought
-            # type_text(f"[Cmd: {command}]")
+            # We use generate_vision because we need to see the screen to know WHERE to click
+            response_json = self.provider.generate_vision(prompt, img)
+            log(f"Agent Plan: {response_json}")
+            
+            # 3. Parse and Execute
+            # Sanitize JSON (sometimes models add markdown blocks)
+            raw_json = response_json.replace("```json", "").replace("```", "").strip()
+            
+            plan = json.loads(raw_json)
+            action = plan.get("action")
+            thought = plan.get("thought", "")
+            print(f" [Agent] 🤔 {thought}", flush=True)
+            
+            if action == "click":
+                x = plan.get("x")
+                y = plan.get("y")
+                
+                # Try Extension first
+                if self.extension.connected:
+                    print(f" [Agent] 🖱️ Extension Clicking at ({x}, {y})...", flush=True)
+                    self.extension.click(x, y)
+                # Try CDP second (no coordinate mapping needed - uses image coords directly)
+                elif self.cdp.connected:
+                    print(f" [Agent] 🖱️ CDP Clicking at ({x}, {y})...", flush=True)
+                    self.cdp.click(x, y)
+                else:
+                    # Fallback to SendInput (requires coordinate mapping)
+                    sx, sy = self.input_manager.map_coordinates(x, y, img.width, img.height)
+                    if sx is not None:
+                        print(f" [Agent] 🖱️ SendInput Clicking at ({sx}, {sy})...", flush=True)
+                        self.input_manager.click(sx, sy)
+                    else:
+                        print(" [Agent] ❌ Could not map coordinates.", flush=True)
+                    
+            elif action == "type":
+                text = plan.get("text")
+                print(f" [Agent] ⌨️ Typing: '{text}'", flush=True)
+                
+                # Try Extension first
+                if self.extension.connected:
+                    self.extension.type_text(text)
+                elif self.cdp.connected:
+                    self.cdp.type_text(text)
+                else:
+                    self.input_manager.type_text(text)
+                
+            elif action == "press":
+                key = plan.get("key")
+                print(f" [Agent] ⌨️ Pressing Key: '{key}'", flush=True)
+                
+                # Try Extension first
+                if self.extension.connected:
+                    self.extension.press_key(key)
+                elif self.cdp.connected:
+                    self.cdp.press_key(key)
+                else:
+                    self.input_manager.press_special_key(key)
+                
+            elif action == "navigate":
+                url = plan.get("url")
+                print(f" [Agent] 🌐 Navigating to {url}", flush=True)
+                
+                # Try Extension first
+                if self.extension.connected:
+                    self.extension.navigate(url)
+                elif self.cdp.connected:
+                    self.cdp.navigate(url)
+                else:
+                    # Fallback: Ctrl+L + type URL + Enter (not implemented yet)
+                    print(" [Agent] ⚠️  Navigate requires Extension or CDP", flush=True)
+                
         except Exception as e:
-            log(f"LLM Error: {e}")
+            log(f"Execution Error: {e}")
+            print(f" [Agent] 💥 Action Failed: {e}", flush=True)
 
     def describe_screen(self):
+        # ... (Unchanged)
         log("Analysing Screen...")
         print(" [Agent] Capturing Screen...", flush=True)
         img = self.visual_cortex.capture_image()
+        # ...
         if not img:
             log("No image captured.")
             print(" [Agent] Failed to capture image (Check Connection/PIL).", flush=True)
