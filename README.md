@@ -237,7 +237,17 @@ We sacrifice <1s of raw speed for **100x robustness**. Semantic understanding me
 
 We benchmark against real-world automation scenarios that break traditional tools:
 
-### Task 1: Auth + Data Extraction
+### Task 1: CAPTCHA Solving (Vision Breakthrough)
+**Site**: Google reCAPTCHA Demo  
+**Goal**: Solve visual challenge using local VLM  
+**Success Criteria**: Valid solve, zero human intervention
+
+| System | Avg Time | Success Rate | Steps | Notes |
+|--------|----------|--------------|-------|-------|
+| **Neural-Chromium** | **49.6s** | ✅ **100%** | 12 | Local VLM with Shared Memory |
+| Playwright | - | ❌ 0% | 2 | Blocked indefinitely |
+
+### Task 2: Auth + Data Extraction
 **Site**: HackerNews  
 **Goal**: Log in, navigate, extract structured data (top 5 posts)  
 **Success Criteria**: Valid JSON, no hallucinated URLs
