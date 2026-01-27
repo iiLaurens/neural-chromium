@@ -1,54 +1,30 @@
 {
-  "Task 1: Auth + Data Extraction": {
+  "TodoMVC React Checkbox": {
     "neural": {
-      "avg_time": 3.3015475273132324,
-      "success_rate": 100.0,
-      "avg_retries": 0,
-      "avg_tool_calls": 2,
-      "failure_modes": []
+      "avg": 19.274710035324098,
+      "min": 18.920391082763672,
+      "max": 19.522291660308838,
+      "success_rate": 100.0
     },
     "playwright": {
-      "avg_time": 1.0799947023391723,
-      "success_rate": 100.0,
-      "avg_retries": 0,
-      "avg_tool_calls": 7,
-      "failure_modes": []
+      "avg": 0.8777013778686523,
+      "min": 0.3226156234741211,
+      "max": 3.0357162952423096,
+      "success_rate": 100.0
     }
   },
-  "Task 2: Dynamic SPA Interaction": {
+  "reCAPTCHA VLM Solve": {
     "neural": {
-      "avg_time": -1,
-      "success_rate": 0.0,
-      "avg_retries": 0,
-      "avg_tool_calls": 14,
-      "failure_modes": [
-        "Active: ['Task 2', 'Task 1', 'Task 3'] (Expected Task 3 only)"
-      ]
+      "avg": -1,
+      "min": -1,
+      "max": -1,
+      "success_rate": 0.0
     },
     "playwright": {
-      "avg_time": 1.2957234382629395,
-      "success_rate": 100.0,
-      "avg_retries": 0,
-      "avg_tool_calls": 11,
-      "failure_modes": []
-    }
-  },
-  "Task 3: Multi-Step Form + Validation": {
-    "neural": {
-      "avg_time": 4.7851890325546265,
-      "success_rate": 100.0,
-      "avg_retries": 0,
-      "avg_tool_calls": 6,
-      "failure_modes": []
-    },
-    "playwright": {
-      "avg_time": -1,
-      "success_rate": 0.0,
-      "avg_retries": 0,
-      "avg_tool_calls": 5,
-      "failure_modes": [
-        "No confirmation"
-      ]
+      "avg": -1,
+      "min": -1,
+      "max": -1,
+      "success_rate": 0.0
     }
   }
 }
